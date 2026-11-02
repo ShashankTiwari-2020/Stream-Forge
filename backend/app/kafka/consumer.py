@@ -1,19 +1,30 @@
 
 import json
+import logging
 
 from kafka import KafkaConsumer
+from kafka.structs import OffsetAndMetadata, TopicPartition
+
+from backend.app.schemas.events import TemperatureEvent
+from backend.app.storage.repository import EventRepository
+
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 class TemperatureConsumer:
-    """Consume truck temperature events from Kafka."""
+    """Consume Kafka events and persist them in SQLite."""
 
     def __init__(self, bootstrap_servers="localhost:9092"):
+        self.repository = EventRepository()
+
         self.consumer = KafkaConsumer(
             "temperature-events",
             bootstrap_servers=bootstrap_servers,
             group_id="streamforge-temperature-consumers",
             auto_offset_reset="earliest",
-            enable_auto_commit=True,
+            enable_auto_commit=False,
             key_deserializer=lambda key: (
                 key.decode("utf-8") if key else None
             ),
@@ -23,21 +34,54 @@ class TemperatureConsumer:
         )
 
     def start(self):
-        print("Listening for temperature events...")
+        logger.info("Listening for temperature events...")
 
         try:
             for message in self.consumer:
-                event = message.value
+                try:
+                    event = TemperatureEvent.model_validate(
+                        message.value
+                    )
 
-                print("\nTemperature event received")
-                print(f"Truck ID: {event['truck_id']}")
-                print(f"Temperature: {event['temperature']} °C")
-                print(f"Timestamp: {event['timestamp']}")
-                print(f"Partition: {message.partition}")
-                print(f"Offset: {message.offset}")
+                    accepted = self.repository.add_event(event)
+
+                    # Commit only after successful persistence
+                    # or confirmation that the event is a duplicate.
+                    self.consumer.commit(
+    offsets={
+        TopicPartition(message.topic, message.partition):
+        OffsetAndMetadata(message.offset + 1, "")
+    }
+)
+
+                    if accepted:
+                        logger.info(
+                            "Event stored: truck=%s temperature=%s "
+                            "partition=%s offset=%s",
+                            event.truck_id,
+                            event.temperature,
+                            message.partition,
+                            message.offset,
+                        )
+                    else:
+                        logger.info(
+                            "Duplicate event ignored: %s",
+                            event.event_id,
+                        )
+
+                except Exception:
+                    logger.exception(
+                        "Failed to process Kafka message at "
+                        "partition=%s offset=%s",
+                        message.partition,
+                        message.offset,
+                    )
+                    # Stop processing so this message is not
+                    # silently skipped by a later offset commit.
+                    raise
 
         except KeyboardInterrupt:
-            print("\nConsumer stopped.")
+            logger.info("Consumer stopped.")
 
         finally:
             self.consumer.close()

@@ -1,9 +1,7 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { 
-  Server, 
   Database, 
   Truck, 
-  ArrowRight, 
   AlertOctagon, 
   Layers, 
   Cpu, 
@@ -32,13 +30,9 @@ export const TopologyCanvas: React.FC<TopologyCanvasProps> = ({
   selectedPartitionId,
   isWorker4Crashed,
 }) => {
-  const [hoveredNode, setHoveredNode] = useState<string | null>(null);
-
   // Focus on worker #4 and worker #5 for detailed highlight
   const worker4 = workers.find(w => w.id === 4);
   const worker5 = workers.find(w => w.id === 5);
-  const partition3 = partitions.find(p => p.id === 3); // Assigned to worker 4 initially
-  const partition4 = partitions.find(p => p.id === 4); // Assigned to worker 5
 
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-xl overflow-hidden relative">
@@ -76,11 +70,7 @@ export const TopologyCanvas: React.FC<TopologyCanvasProps> = ({
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-3 items-stretch relative">
         
         {/* STAGE 1: IoT Fleet Producers */}
-        <div 
-          className="bg-slate-950/70 border border-slate-800 rounded-lg p-3 flex flex-col justify-between relative transition-all hover:border-slate-700"
-          onMouseEnter={() => setHoveredNode('producers')}
-          onMouseLeave={() => setHoveredNode(null)}
-        >
+        <div className="bg-slate-950/70 border border-slate-800 rounded-lg p-3 flex flex-col justify-between relative transition-all hover:border-slate-700">
           <div>
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center space-x-2 text-slate-200">
@@ -124,11 +114,7 @@ export const TopologyCanvas: React.FC<TopologyCanvasProps> = ({
         </div>
 
         {/* STAGE 2: Apache Kafka Message Broker */}
-        <div 
-          className="bg-slate-950/70 border border-slate-800 rounded-lg p-3 flex flex-col justify-between relative transition-all hover:border-slate-700"
-          onMouseEnter={() => setHoveredNode('kafka')}
-          onMouseLeave={() => setHoveredNode(null)}
-        >
+        <div className="bg-slate-950/70 border border-slate-800 rounded-lg p-3 flex flex-col justify-between relative transition-all hover:border-slate-700">
           <div>
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center space-x-2 text-slate-200">
@@ -194,11 +180,7 @@ export const TopologyCanvas: React.FC<TopologyCanvasProps> = ({
         </div>
 
         {/* STAGE 3: Faust Python Stream Processors (20 Workers) */}
-        <div 
-          className="bg-slate-950/70 border border-slate-800 rounded-lg p-3 flex flex-col justify-between relative transition-all hover:border-slate-700"
-          onMouseEnter={() => setHoveredNode('workers')}
-          onMouseLeave={() => setHoveredNode(null)}
-        >
+        <div className="bg-slate-950/70 border border-slate-800 rounded-lg p-3 flex flex-col justify-between relative transition-all hover:border-slate-700">
           <div>
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center space-x-2 text-slate-200">
@@ -291,11 +273,7 @@ export const TopologyCanvas: React.FC<TopologyCanvasProps> = ({
         </div>
 
         {/* STAGE 4: Embedded RocksDB State Store */}
-        <div 
-          className="bg-slate-950/70 border border-slate-800 rounded-lg p-3 flex flex-col justify-between relative transition-all hover:border-slate-700"
-          onMouseEnter={() => setHoveredNode('rocksdb')}
-          onMouseLeave={() => setHoveredNode(null)}
-        >
+        <div className="bg-slate-950/70 border border-slate-800 rounded-lg p-3 flex flex-col justify-between relative transition-all hover:border-slate-700">
           <div>
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center space-x-2 text-slate-200">
@@ -338,11 +316,7 @@ export const TopologyCanvas: React.FC<TopologyCanvasProps> = ({
         </div>
 
         {/* STAGE 5: Downstream Aggregates & Alerting Sink */}
-        <div 
-          className="bg-slate-950/70 border border-slate-800 rounded-lg p-3 flex flex-col justify-between relative transition-all hover:border-slate-700"
-          onMouseEnter={() => setHoveredNode('sink')}
-          onMouseLeave={() => setHoveredNode(null)}
-        >
+        <div className="bg-slate-950/70 border border-slate-800 rounded-lg p-3 flex flex-col justify-between relative transition-all hover:border-slate-700">
           <div>
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center space-x-2 text-slate-200">

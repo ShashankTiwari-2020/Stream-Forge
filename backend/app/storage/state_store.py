@@ -75,6 +75,33 @@ class RocksDBStateStore:
         if not batch.is_empty():
             self._db.write(batch, self._write_options)
 
+    def export_all(self) -> dict[str, Any]:
+        """Export all stored records as decoded JSON values."""
+        self._ensure_open()
+
+        return {
+            key.decode("utf-8"): self._decode(value)
+            for key, value in self._db.items()
+        }
+
+    def replace_all(self, records: dict[str, Any]) -> None:
+        """Atomically replace all stored records with a snapshot."""
+        self._ensure_open()
+
+        batch = WriteBatch()
+
+        for key, _ in list(self._db.items()):
+            batch.delete(key)
+
+        for key, value in records.items():
+            batch.put(
+                key.encode("utf-8"),
+                self._encode(value),
+            )
+
+        if not batch.is_empty():
+            self._db.write(batch, self._write_options)
+
     def close(self) -> None:
         if not self._closed:
             self._db.close()

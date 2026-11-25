@@ -61,3 +61,37 @@ def test_operations_after_close_raise_error(tmp_path):
 
     with pytest.raises(RuntimeError, match="State store is closed"):
         store.get("truck:001")
+
+def test_export_all_returns_all_records(tmp_path):
+    store = RocksDBStateStore(tmp_path / "state")
+
+    store.put("truck:001", {"temperature": 25.5})
+    store.put("event:001", {"status": "processed"})
+
+    exported = store.export_all()
+
+    assert exported == {
+        "truck:001": {"temperature": 25.5},
+        "event:001": {"status": "processed"},
+    }
+
+    store.close()
+
+
+def test_replace_all_restores_snapshot(tmp_path):
+    store = RocksDBStateStore(tmp_path / "state")
+
+    store.put("old:event", {"status": "old"})
+
+    store.replace_all({
+        "truck:001": {"temperature": 22.5},
+        "event:002": {"status": "restored"},
+    })
+
+    assert store.export_all() == {
+        "truck:001": {"temperature": 22.5},
+        "event:002": {"status": "restored"},
+    }
+
+    store.close()
+

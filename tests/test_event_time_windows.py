@@ -297,3 +297,101 @@ def test_late_event_deduplication_rolls_back_when_persistence_fails(
 
     assert retry_result["status"] == "late"
     assert instance.process(late_event)["status"] == "duplicate"
+
+
+def test_validate_persisted_state_accepts_valid_snapshot():
+    state = {
+        EventTimeWindowAggregator.WINDOWS_KEY: {
+            "TRUCK-001": {
+                "2026-11-05T10:00:00+00:00": {
+                    "event-1": {
+                        "event_id": "event-1",
+                        "truck_id": "TRUCK-001",
+                        "temperature": 8.0,
+                        "timestamp": "2026-11-05T10:01:00+00:00",
+                    }
+                }
+            }
+        },
+        EventTimeWindowAggregator.WATERMARKS_KEY: {
+            "TRUCK-001": "2026-11-05T10:06:00+00:00"
+        },
+        EventTimeWindowAggregator.SEEN_IDS_KEY: ["event-1"],
+    }
+
+    EventTimeWindowAggregator.validate_persisted_state(state)
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        (EventTimeWindowAggregator.WINDOWS_KEY, []),
+        (EventTimeWindowAggregator.WATERMARKS_KEY, []),
+        (EventTimeWindowAggregator.SEEN_IDS_KEY, {}),
+    ],
+)
+def test_validate_persisted_state_rejects_invalid_top_level_structures(key, value):
+    state = {
+        EventTimeWindowAggregator.WINDOWS_KEY: {},
+        EventTimeWindowAggregator.WATERMARKS_KEY: {},
+        EventTimeWindowAggregator.SEEN_IDS_KEY: [],
+    }
+    state[key] = value
+
+    with pytest.raises(ValueError):
+        EventTimeWindowAggregator.validate_persisted_state(state)
+
+
+def test_validate_persisted_state_rejects_invalid_window_event():
+    state = {
+        EventTimeWindowAggregator.WINDOWS_KEY: {
+            "TRUCK-001": {
+                "2026-11-05T10:00:00+00:00": {
+                    "event-1": {
+                        "event_id": "event-1",
+                        "truck_id": "TRUCK-001",
+                        "temperature": 8.0,
+                        "timestamp": "not-a-timestamp",
+                    }
+                }
+            }
+        },
+        EventTimeWindowAggregator.WATERMARKS_KEY: {},
+        EventTimeWindowAggregator.SEEN_IDS_KEY: ["event-1"],
+    }
+
+    with pytest.raises(ValueError, match="Invalid event timestamp"):
+        EventTimeWindowAggregator.validate_persisted_state(state)
+
+
+def test_validate_persisted_state_rejects_invalid_watermark():
+    state = {
+        EventTimeWindowAggregator.WINDOWS_KEY: {},
+        EventTimeWindowAggregator.WATERMARKS_KEY: {"TRUCK-001": "invalid"},
+        EventTimeWindowAggregator.SEEN_IDS_KEY: [],
+    }
+
+    with pytest.raises(ValueError, match="Invalid watermark timestamp"):
+        EventTimeWindowAggregator.validate_persisted_state(state)
+
+
+def test_validate_persisted_state_rejects_window_event_missing_from_seen_ids():
+    state = {
+        EventTimeWindowAggregator.WINDOWS_KEY: {
+            "TRUCK-001": {
+                "2026-11-05T10:00:00+00:00": {
+                    "event-1": {
+                        "event_id": "event-1",
+                        "truck_id": "TRUCK-001",
+                        "temperature": 8.0,
+                        "timestamp": "2026-11-05T10:01:00+00:00",
+                    }
+                }
+            }
+        },
+        EventTimeWindowAggregator.WATERMARKS_KEY: {},
+        EventTimeWindowAggregator.SEEN_IDS_KEY: [],
+    }
+
+    with pytest.raises(ValueError, match="missing from seen IDs"):
+        EventTimeWindowAggregator.validate_persisted_state(state)

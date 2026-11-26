@@ -49,6 +49,87 @@ class EventTimeWindowAggregator:
 
         return value.astimezone(timezone.utc)
 
+    @classmethod
+    def validate_persisted_state(cls, records: dict[str, Any]) -> None:
+        """Validate persisted aggregator state before restoring a snapshot."""
+        required = {cls.WINDOWS_KEY, cls.WATERMARKS_KEY, cls.SEEN_IDS_KEY}
+
+        if not isinstance(records, dict) or not required.issubset(records):
+            raise ValueError("Snapshot is missing required aggregator state")
+
+        windows = records[cls.WINDOWS_KEY]
+        watermarks = records[cls.WATERMARKS_KEY]
+        seen_ids = records[cls.SEEN_IDS_KEY]
+
+        if not isinstance(windows, dict):
+            raise ValueError("Invalid aggregator windows")
+        if not isinstance(watermarks, dict):
+            raise ValueError("Invalid aggregator watermarks")
+        if not isinstance(seen_ids, list):
+            raise ValueError("Invalid aggregator seen IDs")
+
+        if any(not isinstance(item, str) or not item for item in seen_ids):
+            raise ValueError("Invalid event ID in seen IDs")
+        if len(seen_ids) != len(set(seen_ids)):
+            raise ValueError("Duplicate event IDs in seen IDs")
+
+        seen_id_set = set(seen_ids)
+
+        for truck_id, truck_windows in windows.items():
+            if not isinstance(truck_id, str) or not truck_id:
+                raise ValueError("Invalid truck ID in windows")
+            if not isinstance(truck_windows, dict):
+                raise ValueError("Invalid truck windows")
+
+            for start, events in truck_windows.items():
+                if not isinstance(start, str):
+                    raise ValueError("Invalid window timestamp")
+                try:
+                    cls._normalize_timestamp(start)
+                except (TypeError, ValueError, OverflowError) as exc:
+                    raise ValueError("Invalid window timestamp") from exc
+
+                if not isinstance(events, dict) or not events:
+                    raise ValueError("Invalid window events")
+
+                for event_id, event in events.items():
+                    if not isinstance(event_id, str) or not event_id:
+                        raise ValueError("Invalid event ID in window")
+                    if not isinstance(event, dict):
+                        raise ValueError("Invalid event record")
+                    if event.get("event_id") != event_id:
+                        raise ValueError("Window event ID does not match its key")
+                    if event.get("truck_id") != truck_id:
+                        raise ValueError("Window event truck ID does not match")
+                    if event_id not in seen_id_set:
+                        raise ValueError("Window event is missing from seen IDs")
+
+                    temperature = event.get("temperature")
+                    if (
+                        isinstance(temperature, bool)
+                        or not isinstance(temperature, (int, float))
+                        or not 0 < temperature <= 100
+                    ):
+                        raise ValueError("Invalid event temperature")
+
+                    timestamp = event.get("timestamp")
+                    if not isinstance(timestamp, str):
+                        raise ValueError("Invalid event timestamp")
+                    try:
+                        cls._normalize_timestamp(timestamp)
+                    except (TypeError, ValueError, OverflowError) as exc:
+                        raise ValueError("Invalid event timestamp") from exc
+
+        for truck_id, timestamp in watermarks.items():
+            if not isinstance(truck_id, str) or not truck_id:
+                raise ValueError("Invalid truck ID in watermarks")
+            if not isinstance(timestamp, str):
+                raise ValueError("Invalid watermark timestamp")
+            try:
+                cls._normalize_timestamp(timestamp)
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ValueError("Invalid watermark timestamp") from exc
+
     def _get_window_start(self, timestamp):
         window_seconds = self.window.total_seconds()
         timestamp_seconds = timestamp.timestamp()

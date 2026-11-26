@@ -8,6 +8,7 @@ import faust
 from pydantic import ValidationError
 
 from backend.app.storage.state_store import RocksDBStateStore
+from backend.app.storage.kafka_state_changelog import KafkaStateChangelog
 from backend.app.storage.kafka_outbox import KafkaOutbox
 from backend.app.streaming.transforms import transform_temperature_event
 from backend.app.streaming.event_time_windows import EventTimeWindowAggregator
@@ -15,6 +16,16 @@ from backend.app.streaming.event_time_windows import EventTimeWindowAggregator
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("streamforge.faust")
+
+KAFKA_BOOTSTRAP_SERVERS = os.getenv(
+    "STREAMFORGE_KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"
+)
+STATE_CHANGELOG_TOPIC = os.getenv(
+    "STREAMFORGE_STATE_CHANGELOG_TOPIC", "streamforge-state-changelog"
+)
+SNAPSHOT_INTERVAL_SECONDS = float(
+    os.getenv("STREAMFORGE_SNAPSHOT_INTERVAL_SECONDS", "60")
+)
 
 STATE_DIR = Path(
     os.getenv(
@@ -26,21 +37,43 @@ STATE_DIR = Path(
 state_store = None
 window_aggregator = None
 kafka_outbox = None
+state_changelog = None
 
 
 def initialize_state() -> None:
-    """Initialize RocksDB, outbox and persistent window state."""
+    """Initialize RocksDB and recover a valid snapshot if local state is empty."""
 
-    global state_store, window_aggregator, kafka_outbox
+    global state_store, window_aggregator, kafka_outbox, state_changelog
 
     if state_store is not None:
         return
 
     logger.info("Opening RocksDB state store: %s", STATE_DIR)
-
     state_store = RocksDBStateStore(STATE_DIR)
 
     try:
+        state_changelog = KafkaStateChangelog(
+            bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
+            topic=STATE_CHANGELOG_TOPIC,
+        )
+
+        local_records = state_store.export_all()
+
+        if not local_records:
+            snapshot = state_changelog.load_latest_snapshot()
+
+            if snapshot is not None:
+                try:
+                    EventTimeWindowAggregator.validate_persisted_state(snapshot)
+                except (TypeError, ValueError) as exc:
+                    logger.warning("Skipping invalid Kafka state snapshot: %s", exc)
+                else:
+                    state_store.replace_all(snapshot)
+                    logger.info(
+                        "Restored RocksDB from Kafka snapshot with %s records",
+                        len(snapshot),
+                    )
+
         kafka_outbox = KafkaOutbox(state_store)
 
         window_aggregator = EventTimeWindowAggregator(
@@ -50,36 +83,47 @@ def initialize_state() -> None:
         )
 
     except Exception:
+        if state_changelog is not None:
+            try:
+                state_changelog.close()
+            except Exception:
+                logger.exception("Failed to close changelog after initialization error")
+
         state_store.close()
         state_store = None
+        state_changelog = None
         kafka_outbox = None
         window_aggregator = None
         raise
 
     logger.info(
-        "Persistent state restored. Pending outbox messages: %s",
+        "Persistent state initialized. Pending outbox messages: %s",
         kafka_outbox.pending_count(),
     )
 
 
 async def close_state() -> None:
-    """Close persistent state during graceful shutdown."""
+    """Flush the changelog and close persistent state during shutdown."""
 
-    global state_store, window_aggregator, kafka_outbox
+    global state_store, window_aggregator, kafka_outbox, state_changelog
 
-    if state_store is not None:
-        logger.info("Closing RocksDB state store")
-
-        state_store.close()
+    try:
+        if state_changelog is not None:
+            state_changelog.close()
+    finally:
+        if state_store is not None:
+            logger.info("Closing RocksDB state store")
+            state_store.close()
 
         state_store = None
         window_aggregator = None
         kafka_outbox = None
+        state_changelog = None
 
 
 app = faust.App(
     "streamforge-week2-processor",
-    broker="kafka://localhost:9092",
+    broker=f"kafka://{KAFKA_BOOTSTRAP_SERVERS}",
     key_serializer="raw",
     value_serializer="json",
     consumer_auto_offset_reset="latest",
@@ -222,6 +266,37 @@ async def publish_pending_messages() -> None:
 
             # Keep this message and later messages pending.
             break
+
+
+@app.timer(interval=SNAPSHOT_INTERVAL_SECONDS)
+async def state_snapshot_timer():
+    """Periodically publish a complete persisted state snapshot."""
+
+    try:
+        initialize_state()
+
+        records = state_store.export_all()
+        required_keys = {
+            EventTimeWindowAggregator.WINDOWS_KEY,
+            EventTimeWindowAggregator.WATERMARKS_KEY,
+            EventTimeWindowAggregator.SEEN_IDS_KEY,
+        }
+
+        if not required_keys.issubset(records):
+            logger.debug("Skipping snapshot: aggregator state not persisted yet")
+            return
+
+        envelope = state_changelog.publish_snapshot(records)
+
+        logger.info(
+            "Published Kafka state snapshot id=%s sequence=%s records=%s",
+            envelope["snapshot_id"],
+            envelope["sequence"],
+            len(records),
+        )
+
+    except Exception:
+        logger.exception("Kafka state snapshot timer failed")
 
 
 @app.timer(interval=1.0)

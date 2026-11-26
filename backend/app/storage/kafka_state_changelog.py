@@ -22,6 +22,7 @@ class KafkaStateChangelog:
         topic: str = "streamforge-state-changelog",
         timeout: float = 30.0,
     ) -> None:
+        self.bootstrap_servers = bootstrap_servers
         self.topic = topic
         self.timeout = timeout
         self._lock = threading.Lock()
@@ -77,7 +78,7 @@ class KafkaStateChangelog:
         if envelope["schema_version"] != cls.SCHEMA_VERSION:
             raise ValueError("Unsupported snapshot schema version")
 
-        if not isinstance(envelope["sequence"], int) or envelope["sequence"] < 1:
+        if not type(envelope["sequence"]) is int or envelope["sequence"] < 1:
             raise ValueError("Invalid snapshot sequence")
 
         if not isinstance(envelope["snapshot_id"], str) or not envelope["snapshot_id"]:
@@ -104,7 +105,7 @@ class KafkaStateChangelog:
 
     def _read_latest_envelope(self) -> dict[str, Any] | None:
         consumer = Consumer({
-            "bootstrap.servers": "localhost:9092",
+            "bootstrap.servers": self.bootstrap_servers,
             "group.id": f"streamforge-changelog-recovery-{uuid.uuid4()}",
             "enable.auto.commit": False,
             "auto.offset.reset": "earliest",
